@@ -6,6 +6,7 @@ resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
   tags = {
     Name = "Main VPC"
+    Environment = "Production"
   }
 }
 
@@ -53,9 +54,18 @@ resource "aws_ecs_cluster" "workers" {
 }
 
 resource "aws_s3_bucket" "events_store" {
-  bucket = "events-store"
+  bucket = "events-store-bucket"
   tags = {
     Environment = "Production"
+  }
+
+  server_side_encryption_configuration {
+    rule {
+      apply_server_side_encryption_by_default {
+        sse_algorithm     = "aws:kms"
+        kms_master_key_id = aws_kms_key.encryption_key.arn
+      }
+    }
   }
 }
 
@@ -69,17 +79,21 @@ resource "aws_redshift_cluster" "analytics" {
   tags = {
     Environment = "Production"
   }
+
+  encrypted = true
+  kms_key_id = aws_kms_key.encryption_key.arn
 }
 
 resource "aws_kms_key" "encryption_key" {
-  description = "KMS key for encrypting data at rest"
+  description = "KMS key for encrypting resources"
   tags = {
     Environment = "Production"
   }
 }
 
-resource "aws_iam_role" "iam_role" {
-  name = "iam-role"
+resource "aws_iam_role" "eks_role" {
+  name = "eks-role"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -98,32 +112,12 @@ resource "aws_iam_role" "iam_role" {
   }
 }
 
-resource "aws_iam_role_policy_attachment" "eks_policy" {
-  role       = aws_iam_role.iam_role.name
+resource "aws_iam_role_policy_attachment" "eks_policy_attachment" {
+  role       = aws_iam_role.eks_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
-resource "aws_iam_role_policy_attachment" "s3_policy" {
-  role       = aws_iam_role.iam_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
-}
-
-resource "aws_iam_role_policy_attachment" "redshift_policy" {
-  role       = aws_iam_role.iam_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonRedshiftFullAccess"
-}
-
-resource "aws_iam_role_policy_attachment" "sqs_policy" {
-  role       = aws_iam_role.iam_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
-}
-
-resource "aws_iam_role_policy_attachment" "kms_policy" {
-  role       = aws_iam_role.iam_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AWSKeyManagementServicePowerUser"
-}
-
-resource "aws_kms_alias" "alias" {
-  name          = "alias/encryption-key"
-  target_key_id = aws_kms_key.encryption_key.id
+resource "aws_iam_role_policy_attachment" "eks_vpc_policy_attachment" {
+  role       = aws_iam_role.eks_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController"
 }
