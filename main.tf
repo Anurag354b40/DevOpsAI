@@ -1,5 +1,5 @@
 provider "aws" {
-  region = "us-west-2"
+  region = "us-east-1"
 }
 
 resource "aws_vpc" "main_vpc" {
@@ -10,7 +10,7 @@ resource "aws_vpc" "main_vpc" {
   }
 }
 
-resource "aws_internet_gateway" "igw" {
+resource "aws_internet_gateway" "internet_gw" {
   vpc_id = aws_vpc.main_vpc.id
 
   tags = {
@@ -19,8 +19,8 @@ resource "aws_internet_gateway" "igw" {
 }
 
 resource "aws_subnet" "private_subnet" {
-  vpc_id            = aws_vpc.main_vpc.id
-  cidr_block        = "10.0.1.0/24"
+  vpc_id                  = aws_vpc.main_vpc.id
+  cidr_block              = "10.0.1.0/24"
   map_public_ip_on_launch = false
 
   tags = {
@@ -28,16 +28,8 @@ resource "aws_subnet" "private_subnet" {
   }
 }
 
-resource "aws_sqs_queue" "event_queue" {
-  name = "event_queue"
-
-  tags = {
-    Environment = "Production"
-  }
-}
-
 resource "aws_eks_cluster" "k8s_source" {
-  name     = "k8s_source"
+  name     = "k8s-source"
   role_arn = aws_iam_role.eks_role.arn
 
   vpc_config {
@@ -45,65 +37,70 @@ resource "aws_eks_cluster" "k8s_source" {
   }
 
   tags = {
-    Environment = "Production"
+    Name = "K8s Source"
   }
 }
 
 resource "aws_ecs_cluster" "ecs_cluster" {
-  name = "ecs_cluster"
+  name = "ecs-cluster"
 
   tags = {
-    Environment = "Production"
-  }
-}
-
-resource "aws_ecs_service" "worker" {
-  count           = 3
-  name            = "worker${count.index + 1}"
-  cluster         = aws_ecs_cluster.ecs_cluster.id
-  desired_count   = 1
-  launch_type     = "FARGATE"
-
-  network_configuration {
-    subnets         = [aws_subnet.private_subnet.id]
-    assign_public_ip = false
-  }
-
-  tags = {
-    Environment = "Production"
+    Name = "ECS Cluster"
   }
 }
 
 resource "aws_s3_bucket" "events_store" {
-  bucket = "events-store"
+  bucket = "events-store-bucket"
+
+  server_side_encryption_configuration {
+    rule {
+      apply_server_side_encryption_by_default {
+        sse_algorithm     = "aws:kms"
+        kms_master_key_id = aws_kms_key.encryption_key.arn
+      }
+    }
+  }
 
   tags = {
-    Environment = "Production"
+    Name = "Events Store"
   }
 }
 
 resource "aws_redshift_cluster" "analytics" {
   cluster_identifier = "analytics-cluster"
   node_type          = "dc2.large"
-  number_of_nodes    = 1
+  number_of_nodes    = 2
   master_username    = "admin"
   master_password    = "YourPassword123"
 
+  encrypted = true
+  kms_key_id = aws_kms_key.encryption_key.arn
+
   tags = {
-    Environment = "Production"
+    Name = "Analytics"
+  }
+}
+
+resource "aws_sqs_queue" "event_queue" {
+  name = "event-queue"
+
+  kms_master_key_id = aws_kms_key.encryption_key.arn
+
+  tags = {
+    Name = "Event Queue"
   }
 }
 
 resource "aws_kms_key" "encryption_key" {
-  description = "KMS encryption key for data at rest"
+  description = "KMS key for encrypting data at rest"
 
   tags = {
-    Environment = "Production"
+    Name = "Encryption Key"
   }
 }
 
 resource "aws_iam_role" "iam_role" {
-  name = "iam_role"
+  name = "iam-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -114,36 +111,36 @@ resource "aws_iam_role" "iam_role" {
         Principal = {
           Service = "eks.amazonaws.com"
         }
-      },
+      }
     ]
   })
 
   tags = {
-    Environment = "Production"
+    Name = "IAM Role"
   }
 }
 
-resource "aws_iam_role_policy_attachment" "eks_policy" {
+resource "aws_iam_role_policy_attachment" "eks_role_policy" {
   role       = aws_iam_role.iam_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
-resource "aws_iam_role_policy_attachment" "s3_policy" {
+resource "aws_iam_role_policy_attachment" "s3_access_policy" {
   role       = aws_iam_role.iam_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
 }
 
-resource "aws_iam_role_policy_attachment" "redshift_policy" {
+resource "aws_iam_role_policy_attachment" "redshift_access_policy" {
   role       = aws_iam_role.iam_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonRedshiftFullAccess"
 }
 
-resource "aws_iam_role_policy_attachment" "sqs_policy" {
+resource "aws_iam_role_policy_attachment" "sqs_access_policy" {
   role       = aws_iam_role.iam_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
 }
 
-resource "aws_iam_role_policy_attachment" "kms_policy" {
+resource "aws_iam_role_policy_attachment" "kms_access_policy" {
   role       = aws_iam_role.iam_role.name
   policy_arn = "arn:aws:iam::aws:policy/AWSKeyManagementServicePowerUser"
 }
